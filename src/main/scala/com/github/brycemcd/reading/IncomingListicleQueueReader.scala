@@ -22,46 +22,36 @@ case class SESMessageBody(MessageId: String,
 // NOTE: if the environment variable is not set, this class will explode
 class IncomingListicleQueueReader(val SQSRegion: Region = Region.Oregon,
                                   val SQSMessageQueueName : String = sys.env("SQSMessageQueueName")) {
-  implicit val sqs= SQS.at(SQSRegion)
-  lazy val msgQ = sqs.queue(SQSMessageQueueName)
-  implicit val formats = DefaultFormats
+  private implicit val sqs: SQS = SQS.at(SQSRegion)
+  private lazy val msgQ: Option[Queue] = sqs.queue(SQSMessageQueueName)
+  private implicit val formats: DefaultFormats.type = DefaultFormats
 
   var i = 0
 
-  // YOU ARE HERE
-  // process messages in an infinite loop
   @tailrec
-  final def msgsOnQ[T](fx : SESMessageBody => T) : Seq[T] = {
-    println("getting message")
-    println(SQSMessageQueueName)
-
+  final def msgsOnQ(fx : SESMessageBody => Boolean) : Boolean = {
+    print(".")
     val msgs = msgQ.get.messages.map { msg =>
-      fx( parse(msg.body).extract[SESMessageBody] )
+      if(fx(parse(msg.body).extract[SESMessageBody])) deleteMsg(msg)
+      msg
     }
 
     i = i + 1
 
-
-    if(msgs.isEmpty) Thread.sleep(1000)
-    if(i < 6) msgsOnQ(fx) else msgs
+    if(msgs.isEmpty) Thread.sleep(30000)
+    // NOTE: this makes it an infinite loop
+    if(i != -1) msgsOnQ(fx) else true
   }
+
+  private def deleteMsg(msg: awscala.sqs.Message): Unit = msg.destroy()
 }
 
 object IncomingListicleQueueReader {
 
-  def allMessagesOnQ[T](fx: SESMessageBody => T) = {
+  def allMessagesOnQ(fx: SESMessageBody => Boolean): Boolean = {
     val ilqr = new IncomingListicleQueueReader()
+    println(s"connecting to ${sys.env("SQSMessageQueueName")} queue and checking messages")
     ilqr.msgsOnQ(fx)
   }
 }
 
-object Main extends App{
-
-  def log(msg: SESMessageBody) = {
-    println(msg)
-  }
-
-  override def main(args: Array[String]): Unit = {
-    IncomingListicleQueueReader.allMessagesOnQ(log)
-  }
-}
